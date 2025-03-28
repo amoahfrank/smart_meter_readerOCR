@@ -192,3 +192,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Espressif for the ESP32-S3 and ESP-IDF
+- TensorFlow team for TensorFlow Lite for Microcontrollers
+- The open-source community for various libraries and tools
