@@ -60,19 +60,83 @@ The system architecture follows a modular design with these key components:
 
 ```
 smart_meter_readerOCR/
-├── components/               # Reusable components
-│   ├── camera/               # Camera driver and utilities
-│   ├── display/              # Display driver and UI
-│   ├── ocr/                  # OCR implementation and models
-│   ├── connectivity/         # WiFi, BLE, LoRaWAN modules
-│   ├── power_mgmt/           # Power management utilities
-│   ├── security/             # Security implementations
-│   └── configuration/        # Configuration manager
-├── main/                     # Main application
-├── models/                   # TensorFlow Lite models
-├── tools/                    # Utilities for development
-├── docs/                     # Documentation
-└── ... (other project files)
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── components/
+│   ├── camera/
+│   │   ├── include/
+│   │   │   └── camera.h
+│   │   ├── camera.c
+│   │   └── CMakeLists.txt
+│   ├── display/
+│   │   ├── include/
+│   │   │   └── display.h
+│   │   ├── display.c
+│   │   └── CMakeLists.txt
+│   ├── ocr/
+│   │   ├── include/
+│   │   │   ├── ocr.h
+│   │   │   ├── image_processing.h
+│   │   │   └── model_interface.h
+│   │   ├── ocr.c
+│   │   ├── image_processing.c
+│   │   ├── model_interface.c
+│   │   └── CMakeLists.txt
+│   ├── connectivity/
+│   │   ├── include/
+│   │   │   ├── wifi_manager.h
+│   │   │   ├── ble_manager.h
+│   │   │   └── lora_manager.h
+│   │   ├── wifi_manager.c
+│   │   ├── ble_manager.c
+│   │   ├── lora_manager.c
+│   │   └── CMakeLists.txt
+│   ├── power_mgmt/
+│   │   ├── include/
+│   │   │   └── power_mgmt.h
+│   │   ├── power_mgmt.c
+│   │   └── CMakeLists.txt
+│   ├── security/
+│   │   ├── include/
+│   │   │   ├── security_manager.h
+│   │   │   └── ota_manager.h
+│   │   ├── security_manager.c
+│   │   ├── ota_manager.c
+│   │   └── CMakeLists.txt
+│   └── configuration/
+│       ├── include/
+│       │   └── configuration.h
+│       ├── configuration.c
+│       └── CMakeLists.txt
+├── main/
+│   ├── include/
+│   │   ├── app_main.h
+│   │   └── state_machine.h
+│   ├── app_main.c
+│   ├── state_machine.c
+│   └── CMakeLists.txt
+├── models/
+│   ├── digit_recognition_model.tflite
+│   └── README.md
+├── tools/
+│   ├── model_converter/
+│   │   ├── convert_model.py
+│   │   └── requirements.txt
+│   └── calibration/
+│       ├── calibrate_camera.py
+│       └── requirements.txt
+├── docs/
+│   ├── hardware_setup.md
+│   ├── software_guide.md
+│   ├── ocr_model.md
+│   ├── security.md
+│   └── images/
+├── partitions.csv
+├── sdkconfig.defaults
+├── CMakeLists.txt
+├── LICENSE
+└── README.md
 ```
 
 ## Build and Installation
