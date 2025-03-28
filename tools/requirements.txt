@@ -1,0 +1,19 @@
+# Main requirements for all tools
+tensorflow>=2.5.0
+numpy>=1.19.5
+opencv-python>=4.5.1
+pillow>=8.2.0
+matplotlib>=3.4.2
+pyserial>=3.5
+scikit-image>=0.18.1
+pandas>=1.3.0
+tqdm>=4.61.0
+psutil>=5.8.0
+h5py>=3.1.0
+
+# Install specific tool dependencies using:
+# For model converter: pip install -r tools/model_converter/requirements.txt
+# For calibration: pip install -r tools/calibration/requirements.txt
+# For simulator: pip install -r tools/simulator/requirements.txt
+# For benchmark: pip install -r tools/benchmark/requirements.txt
+# For data collection: pip install -r tools/data_collection/requirements.txt
