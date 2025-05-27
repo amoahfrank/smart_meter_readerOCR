@@ -1,633 +1,910 @@
 #!/usr/bin/env python3
 """
-OCR Benchmark Tool for Smart Meter Reader OCR project.
+Smart Meter Reader OCR - Benchmarking Tool
 
-This script evaluates the performance of the OCR model by measuring accuracy, 
-inference time, and resource usage on a set of test images.
+This script provides comprehensive evaluation and benchmarking capabilities
+for trained OCR models. It can test models on various datasets, compare
+different model architectures, and generate detailed performance reports.
+
+Features:
+- Model accuracy evaluation
+- Speed benchmarking
+- Error analysis and visualization
+- Cross-dataset validation
+- Model comparison
+- Performance profiling
+- Report generation
+
+Usage:
+    # Basic evaluation
+    python ocr_benchmark.py --model ./models/final_model.h5 --test-data ./test_images
+
+    # Compare multiple models
+    python ocr_benchmark.py --compare-models ./models/cnn.h5 ./models/resnet.h5 --test-data ./test_images
+
+    # Generate comprehensive report
+    python ocr_benchmark.py --model ./models/final_model.h5 --test-data ./test_images --full-report
+
+Author: Smart Meter Reader OCR Team
 """
 
-import os
-import sys
 import argparse
+import os
 import json
-import time
-import csv
-import glob
-import cv2
 import numpy as np
-import matplotlib.pyplot as plt
-from PIL import Image
-import psutil
 import tensorflow as tf
-from tqdm import tqdm
+import cv2
+import matplotlib.pyplot as plt
+import seaborn as sns
+from pathlib import Path
+import time
+import psutil
+import logging
+from datetime import datetime
+from typing import List, Dict, Tuple, Optional, Any
+from dataclasses import dataclass
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import precision_recall_fscore_support
 import pandas as pd
+from tqdm import tqdm
+import warnings
 
-# Add project root to path so we can import the OCR module
-sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
+# Suppress warnings for cleaner output
+warnings.filterwarnings('ignore')
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+@dataclass
+class BenchmarkResult:
+    """Data class to store benchmark results"""
+    model_name: str
+    accuracy: float
+    precision: float
+    recall: float
+    f1_score: float
+    inference_time_ms: float
+    memory_usage_mb: float
+    model_size_mb: float
+    confusion_matrix: np.ndarray
+    classification_report: Dict
+    error_analysis: Dict
+    performance_by_digit: Dict
+
+class OCRBenchmark:
+    """Comprehensive OCR model benchmarking tool"""
+    
+    def __init__(self, output_dir: str = "./benchmark_results"):
+        """
+        Initialize the benchmark tool
+        
+        Args:
+            output_dir (str): Directory to save benchmark results
+        """
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create subdirectories
+        self.plots_dir = self.output_dir / "plots"
+        self.reports_dir = self.output_dir / "reports"
+        self.data_dir = self.output_dir / "data"
+        
+        for dir_path in [self.plots_dir, self.reports_dir, self.data_dir]:
+            dir_path.mkdir(exist_ok=True)
+        
+        self.benchmark_results = []
+        self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        logger.info(f"Benchmark tool initialized. Output directory: {self.output_dir}")
+
+    def load_test_data(self, test_data_path: str) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """
+        Load test data from various formats
+        
+        Args:
+            test_data_path (str): Path to test data (JSON file or image directory)
+            
+        Returns:
+            Tuple of (images, labels, filenames)
+        """
+        test_path = Path(test_data_path)
+        
+        if test_path.is_file() and test_path.suffix == '.json':
+            return self._load_from_json(test_path)
+        elif test_path.is_dir():
+            return self._load_from_directory(test_path)
+        else:
+            raise ValueError(f"Unsupported test data format: {test_data_path}")
+
+    def _load_from_json(self, json_path: Path) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """Load test data from JSON file (training export format)"""
+        with open(json_path, 'r') as f:
+            test_data = json.load(f)
+        
+        images = []
+        labels = []
+        filenames = []
+        
+        logger.info(f"Loading {len(test_data)} test samples from JSON...")
+        
+        for sample in tqdm(test_data, desc="Loading test data"):
+            try:
+                # Load image
+                image_path = sample['image_path']
+                if not os.path.exists(image_path):
+                    logger.warning(f"Image not found: {image_path}")
+                    continue
+                
+                image = cv2.imread(image_path)
+                if image is None:
+                    logger.warning(f"Could not load image: {image_path}")
+                    continue
+                
+                # Convert to RGB and extract digits
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                reading = sample['label']
+                
+                # Extract individual digits (simplified implementation)
+                digit_images = self._extract_digits_for_testing(image, reading)
+                
+                for digit_image, digit_label in digit_images:
+                    # Resize to standard size
+                    digit_image = cv2.resize(digit_image, (28, 28))
+                    
+                    # Normalize
+                    if len(digit_image.shape) == 3:
+                        digit_image = cv2.cvtColor(digit_image, cv2.COLOR_RGB2GRAY)
+                    
+                    digit_image = digit_image.astype(np.float32) / 255.0
+                    digit_image = np.expand_dims(digit_image, axis=-1)
+                    
+                    images.append(digit_image)
+                    labels.append(int(digit_label))
+                    filenames.append(f"{Path(image_path).stem}_{digit_label}")
+                    
+            except Exception as e:
+                logger.warning(f"Error processing sample: {e}")
+                continue
+        
+        return np.array(images), np.array(labels), filenames
+
+    def _load_from_directory(self, dir_path: Path) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """Load test data from directory of labeled images"""
+        images = []
+        labels = []
+        filenames = []
+        
+        # Find all image files
+        image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff'}
+        image_files = []
+        for ext in image_extensions:
+            image_files.extend(list(dir_path.glob(f"*{ext}")))
+            image_files.extend(list(dir_path.glob(f"*{ext.upper()}")))
+        
+        logger.info(f"Loading {len(image_files)} images from directory...")
+        
+        for image_file in tqdm(image_files, desc="Loading images"):
+            try:
+                # Extract label from filename (assuming format: "digit_X_..." or "X_...")
+                filename = image_file.stem
+                label = None
+                
+                # Try different naming conventions
+                if '_' in filename:
+                    parts = filename.split('_')
+                    for part in parts:
+                        if part.isdigit() and len(part) == 1:
+                            label = int(part)
+                            break
+                elif filename.isdigit() and len(filename) == 1:
+                    label = int(filename)
+                
+                if label is None:
+                    logger.warning(f"Could not extract label from filename: {filename}")
+                    continue
+                
+                # Load and preprocess image
+                image = cv2.imread(str(image_file), cv2.IMREAD_GRAYSCALE)
+                if image is None:
+                    continue
+                
+                image = cv2.resize(image, (28, 28))
+                image = image.astype(np.float32) / 255.0
+                image = np.expand_dims(image, axis=-1)
+                
+                images.append(image)
+                labels.append(label)
+                filenames.append(filename)
+                
+            except Exception as e:
+                logger.warning(f"Error processing {image_file}: {e}")
+                continue
+        
+        return np.array(images), np.array(labels), filenames
+
+    def _extract_digits_for_testing(self, image: np.ndarray, reading: str) -> List[Tuple[np.ndarray, str]]:
+        """Extract individual digits from meter reading image for testing"""
+        # This is a simplified implementation for testing
+        # In practice, this would use the same segmentation as in training
+        
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        height, width = gray.shape
+        
+        # Simple approach: divide image into equal segments
+        digit_images = []
+        digit_width = width // len(reading)
+        
+        for i, digit_char in enumerate(reading):
+            x_start = i * digit_width
+            x_end = min((i + 1) * digit_width, width)
+            digit_roi = gray[:, x_start:x_end]
+            digit_images.append((digit_roi, digit_char))
+        
+        return digit_images
+
+    def benchmark_model(
+        self, 
+        model_path: str, 
+        test_images: np.ndarray, 
+        test_labels: np.ndarray,
+        model_name: Optional[str] = None
+    ) -> BenchmarkResult:
+        """
+        Comprehensive benchmark of a single model
+        
+        Args:
+            model_path (str): Path to the model file
+            test_images (np.ndarray): Test images
+            test_labels (np.ndarray): Test labels  
+            model_name (str, optional): Name for the model
+            
+        Returns:
+            BenchmarkResult: Comprehensive benchmark results
+        """
+        if model_name is None:
+            model_name = Path(model_path).stem
+        
+        logger.info(f"Benchmarking model: {model_name}")
+        
+        # Load model
+        if model_path.endswith('.tflite'):
+            model = self._load_tflite_model(model_path)
+            is_tflite = True
+        else:
+            model = tf.keras.models.load_model(model_path)
+            is_tflite = False
+        
+        # Get model size
+        model_size_mb = os.path.getsize(model_path) / (1024 * 1024)
+        
+        # Memory usage before inference
+        process = psutil.Process()
+        memory_before = process.memory_info().rss / (1024 * 1024)
+        
+        # Accuracy evaluation
+        logger.info("Evaluating accuracy...")
+        if is_tflite:
+            predictions, inference_times = self._predict_tflite(model, test_images)
+        else:
+            predictions, inference_times = self._predict_keras(model, test_images)
+        
+        # Memory usage after inference
+        memory_after = process.memory_info().rss / (1024 * 1024)
+        memory_usage_mb = memory_after - memory_before
+        
+        # Calculate metrics
+        predicted_labels = np.argmax(predictions, axis=1)
+        accuracy = accuracy_score(test_labels, predicted_labels)
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            test_labels, predicted_labels, average='weighted'
+        )
+        
+        # Confusion matrix
+        conf_matrix = confusion_matrix(test_labels, predicted_labels)
+        
+        # Classification report
+        class_report = classification_report(
+            test_labels, predicted_labels, output_dict=True
+        )
+        
+        # Performance analysis
+        avg_inference_time = np.mean(inference_times) * 1000  # Convert to ms
+        
+        # Error analysis
+        error_analysis = self._analyze_errors(
+            test_labels, predicted_labels, predictions
+        )
+        
+        # Performance by digit
+        performance_by_digit = self._analyze_performance_by_digit(
+            test_labels, predicted_labels, predictions
+        )
+        
+        result = BenchmarkResult(
+            model_name=model_name,
+            accuracy=accuracy,
+            precision=precision,
+            recall=recall,
+            f1_score=f1,
+            inference_time_ms=avg_inference_time,
+            memory_usage_mb=memory_usage_mb,
+            model_size_mb=model_size_mb,
+            confusion_matrix=conf_matrix,
+            classification_report=class_report,
+            error_analysis=error_analysis,
+            performance_by_digit=performance_by_digit
+        )
+        
+        self.benchmark_results.append(result)
+        
+        logger.info(f"Benchmark completed for {model_name}")
+        logger.info(f"  Accuracy: {accuracy:.4f}")
+        logger.info(f"  Inference time: {avg_inference_time:.2f}ms")
+        logger.info(f"  Model size: {model_size_mb:.2f}MB")
+        
+        return result
+
+    def _load_tflite_model(self, model_path: str):
+        """Load TensorFlow Lite model"""
+        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter.allocate_tensors()
+        return interpreter
+
+    def _predict_keras(self, model, test_images: np.ndarray) -> Tuple[np.ndarray, List[float]]:
+        """Make predictions using Keras model"""
+        batch_size = 32
+        predictions = []
+        inference_times = []
+        
+        for i in range(0, len(test_images), batch_size):
+            batch = test_images[i:i + batch_size]
+            
+            start_time = time.time()
+            batch_pred = model.predict(batch, verbose=0)
+            end_time = time.time()
+            
+            predictions.append(batch_pred)
+            inference_times.extend([(end_time - start_time) / len(batch)] * len(batch))
+        
+        return np.vstack(predictions), inference_times
+
+    def _predict_tflite(self, interpreter, test_images: np.ndarray) -> Tuple[np.ndarray, List[float]]:
+        """Make predictions using TensorFlow Lite model"""
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+        
+        predictions = []
+        inference_times = []
+        
+        for image in tqdm(test_images, desc="TFLite inference"):
+            # Prepare input
+            input_data = np.expand_dims(image, axis=0)
+            if input_details[0]['dtype'] == np.uint8:
+                input_data = (input_data * 255).astype(np.uint8)
+            else:
+                input_data = input_data.astype(np.float32)
+            
+            # Run inference
+            start_time = time.time()
+            interpreter.set_tensor(input_details[0]['index'], input_data)
+            interpreter.invoke()
+            output_data = interpreter.get_tensor(output_details[0]['index'])
+            end_time = time.time()
+            
+            predictions.append(output_data[0])
+            inference_times.append(end_time - start_time)
+        
+        return np.array(predictions), inference_times
+
+    def _analyze_errors(
+        self, 
+        true_labels: np.ndarray, 
+        predicted_labels: np.ndarray, 
+        predictions: np.ndarray
+    ) -> Dict[str, Any]:
+        """Analyze prediction errors"""
+        errors = {}
+        
+        # Find misclassified samples
+        misclassified = true_labels != predicted_labels
+        error_count = np.sum(misclassified)
+        error_rate = error_count / len(true_labels)
+        
+        errors['total_errors'] = int(error_count)
+        errors['error_rate'] = float(error_rate)
+        
+        # Most common errors
+        error_pairs = []
+        for true_label, pred_label in zip(true_labels[misclassified], predicted_labels[misclassified]):
+            error_pairs.append((int(true_label), int(pred_label)))
+        
+        from collections import Counter
+        common_errors = Counter(error_pairs).most_common(10)
+        errors['most_common_errors'] = [
+            {'true': true, 'predicted': pred, 'count': count}
+            for (true, pred), count in common_errors
+        ]
+        
+        # Low confidence predictions
+        confidences = np.max(predictions, axis=1)
+        low_confidence_mask = confidences < 0.8
+        errors['low_confidence_count'] = int(np.sum(low_confidence_mask))
+        errors['avg_confidence'] = float(np.mean(confidences))
+        
+        return errors
+
+    def _analyze_performance_by_digit(
+        self, 
+        true_labels: np.ndarray, 
+        predicted_labels: np.ndarray, 
+        predictions: np.ndarray
+    ) -> Dict[str, Dict[str, float]]:
+        """Analyze performance for each digit separately"""
+        performance = {}
+        
+        for digit in range(10):
+            digit_mask = true_labels == digit
+            if np.sum(digit_mask) == 0:
+                continue
+            
+            digit_true = true_labels[digit_mask]
+            digit_pred = predicted_labels[digit_mask]
+            digit_probs = predictions[digit_mask]
+            
+            # Calculate metrics for this digit
+            accuracy = accuracy_score(digit_true, digit_pred)
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                digit_true, digit_pred, average='weighted', zero_division=0
+            )
+            
+            # Average confidence for this digit
+            confidence = np.mean(np.max(digit_probs, axis=1))
+            
+            performance[str(digit)] = {
+                'accuracy': float(accuracy),
+                'precision': float(precision),
+                'recall': float(recall),
+                'f1_score': float(f1),
+                'avg_confidence': float(confidence),
+                'sample_count': int(np.sum(digit_mask))
+            }
+        
+        return performance
+
+    def compare_models(
+        self, 
+        model_paths: List[str], 
+        test_images: np.ndarray, 
+        test_labels: np.ndarray
+    ) -> List[BenchmarkResult]:
+        """
+        Compare multiple models on the same test set
+        
+        Args:
+            model_paths (List[str]): List of model file paths
+            test_images (np.ndarray): Test images
+            test_labels (np.ndarray): Test labels
+            
+        Returns:
+            List[BenchmarkResult]: Results for all models
+        """
+        logger.info(f"Comparing {len(model_paths)} models...")
+        
+        results = []
+        for model_path in model_paths:
+            try:
+                result = self.benchmark_model(model_path, test_images, test_labels)
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Failed to benchmark {model_path}: {e}")
+                continue
+        
+        # Generate comparison plots
+        self._plot_model_comparison(results)
+        
+        return results
+
+    def _plot_model_comparison(self, results: List[BenchmarkResult]):
+        """Create comparison plots for multiple models"""
+        if len(results) < 2:
+            return
+        
+        # Metrics comparison
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        
+        model_names = [r.model_name for r in results]
+        metrics = {
+            'Accuracy': [r.accuracy for r in results],
+            'Precision': [r.precision for r in results],
+            'Recall': [r.recall for r in results],
+            'F1-Score': [r.f1_score for r in results]
+        }
+        
+        # Plot metrics
+        for i, (metric_name, values) in enumerate(metrics.items()):
+            ax = axes[i // 2, i % 2]
+            bars = ax.bar(model_names, values)
+            ax.set_title(f'{metric_name} Comparison')
+            ax.set_ylabel(metric_name)
+            ax.set_ylim(0, 1)
+            
+            # Add value labels on bars
+            for bar, value in zip(bars, values):
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                       f'{value:.3f}', ha='center', va='bottom')
+        
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(self.plots_dir / 'model_comparison_metrics.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Performance vs Size trade-off
+        plt.figure(figsize=(10, 6))
+        accuracies = [r.accuracy for r in results]
+        sizes = [r.model_size_mb for r in results]
+        
+        plt.scatter(sizes, accuracies, s=100, alpha=0.7)
+        for i, name in enumerate(model_names):
+            plt.annotate(name, (sizes[i], accuracies[i]), 
+                        xytext=(5, 5), textcoords='offset points')
+        
+        plt.xlabel('Model Size (MB)')
+        plt.ylabel('Accuracy')
+        plt.title('Accuracy vs Model Size Trade-off')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(self.plots_dir / 'accuracy_vs_size.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Speed vs Accuracy trade-off
+        plt.figure(figsize=(10, 6))
+        inference_times = [r.inference_time_ms for r in results]
+        
+        plt.scatter(inference_times, accuracies, s=100, alpha=0.7)
+        for i, name in enumerate(model_names):
+            plt.annotate(name, (inference_times[i], accuracies[i]), 
+                        xytext=(5, 5), textcoords='offset points')
+        
+        plt.xlabel('Inference Time (ms)')
+        plt.ylabel('Accuracy')
+        plt.title('Accuracy vs Inference Speed Trade-off')
+        plt.grid(True, alpha=0.3)
+        plt.savefig(self.plots_dir / 'accuracy_vs_speed.png', dpi=300, bbox_inches='tight')
+        plt.close()
+
+    def generate_visualizations(self, result: BenchmarkResult):
+        """Generate visualization plots for benchmark results"""
+        
+        # Confusion Matrix
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(result.confusion_matrix, annot=True, fmt='d', cmap='Blues',
+                   xticklabels=range(10), yticklabels=range(10))
+        plt.title(f'Confusion Matrix - {result.model_name}')
+        plt.xlabel('Predicted Label')
+        plt.ylabel('True Label')
+        plt.savefig(self.plots_dir / f'confusion_matrix_{result.model_name}.png', 
+                   dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # Performance by digit
+        if result.performance_by_digit:
+            digits = list(result.performance_by_digit.keys())
+            accuracies = [result.performance_by_digit[d]['accuracy'] for d in digits]
+            
+            plt.figure(figsize=(12, 6))
+            bars = plt.bar(digits, accuracies)
+            plt.title(f'Accuracy by Digit - {result.model_name}')
+            plt.xlabel('Digit')
+            plt.ylabel('Accuracy')
+            plt.ylim(0, 1)
+            
+            # Add value labels
+            for bar, acc in zip(bars, accuracies):
+                height = bar.get_height()
+                plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                        f'{acc:.3f}', ha='center', va='bottom')
+            
+            plt.savefig(self.plots_dir / f'accuracy_by_digit_{result.model_name}.png',
+                       dpi=300, bbox_inches='tight')
+            plt.close()
+
+    def generate_report(self, results: List[BenchmarkResult], save_json: bool = True) -> Dict:
+        """
+        Generate comprehensive benchmark report
+        
+        Args:
+            results (List[BenchmarkResult]): Benchmark results
+            save_json (bool): Whether to save report as JSON
+            
+        Returns:
+            Dict: Complete report data
+        """
+        logger.info("Generating comprehensive report...")
+        
+        report = {
+            'benchmark_info': {
+                'session_id': self.session_id,
+                'timestamp': datetime.now().isoformat(),
+                'models_tested': len(results),
+                'test_samples': len(results[0].confusion_matrix) if results else 0
+            },
+            'summary': {},
+            'detailed_results': [],
+            'recommendations': []
+        }
+        
+        if not results:
+            logger.warning("No benchmark results to report")
+            return report
+        
+        # Summary statistics
+        accuracies = [r.accuracy for r in results]
+        inference_times = [r.inference_time_ms for r in results]
+        model_sizes = [r.model_size_mb for r in results]
+        
+        report['summary'] = {
+            'best_accuracy': {
+                'model': results[np.argmax(accuracies)].model_name,
+                'value': float(max(accuracies))
+            },
+            'fastest_inference': {
+                'model': results[np.argmin(inference_times)].model_name,
+                'value': float(min(inference_times))
+            },
+            'smallest_model': {
+                'model': results[np.argmin(model_sizes)].model_name,
+                'value': float(min(model_sizes))
+            },
+            'average_accuracy': float(np.mean(accuracies)),
+            'accuracy_std': float(np.std(accuracies))
+        }
+        
+        # Detailed results for each model
+        for result in results:
+            detailed = {
+                'model_name': result.model_name,
+                'metrics': {
+                    'accuracy': result.accuracy,
+                    'precision': result.precision,
+                    'recall': result.recall,
+                    'f1_score': result.f1_score
+                },
+                'performance': {
+                    'inference_time_ms': result.inference_time_ms,
+                    'memory_usage_mb': result.memory_usage_mb,
+                    'model_size_mb': result.model_size_mb
+                },
+                'error_analysis': result.error_analysis,
+                'performance_by_digit': result.performance_by_digit
+            }
+            report['detailed_results'].append(detailed)
+        
+        # Generate recommendations
+        report['recommendations'] = self._generate_recommendations(results)
+        
+        # Save report
+        if save_json:
+            report_file = self.reports_dir / f"benchmark_report_{self.session_id}.json"
+            with open(report_file, 'w') as f:
+                json.dump(report, f, indent=2, default=str)
+            logger.info(f"Report saved: {report_file}")
+        
+        # Generate markdown report
+        self._generate_markdown_report(report)
+        
+        return report
+
+    def _generate_recommendations(self, results: List[BenchmarkResult]) -> List[str]:
+        """Generate recommendations based on benchmark results"""
+        recommendations = []
+        
+        if not results:
+            return recommendations
+        
+        # Find best model by different criteria
+        best_accuracy_idx = np.argmax([r.accuracy for r in results])
+        best_speed_idx = np.argmin([r.inference_time_ms for r in results])
+        best_size_idx = np.argmin([r.model_size_mb for r in results])
+        
+        best_acc_model = results[best_accuracy_idx]
+        best_speed_model = results[best_speed_idx]
+        best_size_model = results[best_size_idx]
+        
+        # Accuracy recommendations
+        if best_acc_model.accuracy < 0.85:
+            recommendations.append(
+                "⚠️ Best model accuracy is below 85%. Consider collecting more training data "
+                "or using data augmentation to improve performance."
+            )
+        elif best_acc_model.accuracy > 0.95:
+            recommendations.append(
+                "✅ Excellent accuracy achieved! Model is ready for production deployment."
+            )
+        
+        # Speed recommendations
+        if best_speed_model.inference_time_ms > 100:
+            recommendations.append(
+                f"⚠️ Inference time is {best_speed_model.inference_time_ms:.1f}ms. "
+                "Consider model quantization or pruning for faster inference."
+            )
+        
+        # Size recommendations
+        if best_size_model.model_size_mb > 10:
+            recommendations.append(
+                f"⚠️ Model size is {best_size_model.model_size_mb:.1f}MB. "
+                "Consider quantization for ESP32 deployment (recommended <2MB)."
+            )
+        
+        # Error analysis recommendations
+        for result in results:
+            if result.error_analysis.get('low_confidence_count', 0) > len(results) * 0.1:
+                recommendations.append(
+                    f"⚠️ {result.model_name} has many low confidence predictions. "
+                    "Consider improving data quality or model architecture."
+                )
+        
+        # Performance balance recommendation
+        if len(results) > 1:
+            # Calculate performance score (weighted accuracy, speed, size)
+            scores = []
+            for r in results:
+                score = (r.accuracy * 0.6 + 
+                        (1.0 - min(r.inference_time_ms / 1000, 1.0)) * 0.3 +
+                        (1.0 - min(r.model_size_mb / 50, 1.0)) * 0.1)
+                scores.append(score)
+            
+            best_overall_idx = np.argmax(scores)
+            recommendations.append(
+                f"🎯 Recommended model for deployment: {results[best_overall_idx].model_name} "
+                f"(balanced accuracy: {results[best_overall_idx].accuracy:.3f}, "
+                f"speed: {results[best_overall_idx].inference_time_ms:.1f}ms, "
+                f"size: {results[best_overall_idx].model_size_mb:.1f}MB)"
+            )
+        
+        return recommendations
+
+    def _generate_markdown_report(self, report: Dict):
+        """Generate a markdown report"""
+        markdown_content = f"""# OCR Model Benchmark Report
+
+**Generated:** {report['benchmark_info']['timestamp']}  
+**Session ID:** {report['benchmark_info']['session_id']}  
+**Models Tested:** {report['benchmark_info']['models_tested']}
+
+## Summary
+
+| Metric | Best Model | Value |
+|--------|------------|-------|
+| **Highest Accuracy** | {report['summary']['best_accuracy']['model']} | {report['summary']['best_accuracy']['value']:.4f} |
+| **Fastest Inference** | {report['summary']['fastest_inference']['model']} | {report['summary']['fastest_inference']['value']:.2f}ms |
+| **Smallest Size** | {report['summary']['smallest_model']['model']} | {report['summary']['smallest_model']['value']:.2f}MB |
+
+**Average Accuracy:** {report['summary']['average_accuracy']:.4f} ± {report['summary']['accuracy_std']:.4f}
+
+## Detailed Results
+
+"""
+        
+        for result in report['detailed_results']:
+            markdown_content += f"""### {result['model_name']}
+
+| Metric | Value |
+|--------|-------|
+| Accuracy | {result['metrics']['accuracy']:.4f} |
+| Precision | {result['metrics']['precision']:.4f} |
+| Recall | {result['metrics']['recall']:.4f} |
+| F1-Score | {result['metrics']['f1_score']:.4f} |
+| Inference Time | {result['performance']['inference_time_ms']:.2f}ms |
+| Model Size | {result['performance']['model_size_mb']:.2f}MB |
+| Memory Usage | {result['performance']['memory_usage_mb']:.2f}MB |
+
+**Error Analysis:**
+- Total Errors: {result['error_analysis']['total_errors']}
+- Error Rate: {result['error_analysis']['error_rate']:.4f}
+- Low Confidence Predictions: {result['error_analysis']['low_confidence_count']}
+- Average Confidence: {result['error_analysis']['avg_confidence']:.4f}
+
+"""
+        
+        # Add recommendations
+        markdown_content += "\n## Recommendations\n\n"
+        for i, rec in enumerate(report['recommendations'], 1):
+            markdown_content += f"{i}. {rec}\n\n"
+        
+        # Save markdown report
+        report_file = self.reports_dir / f"benchmark_report_{self.session_id}.md"
+        with open(report_file, 'w') as f:
+            f.write(markdown_content)
+        
+        logger.info(f"Markdown report saved: {report_file}")
+
 
 def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='OCR Benchmark Tool')
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description="OCR Model Benchmarking Tool")
     
-    # Input sources
-    parser.add_argument('--test-data', required=True, 
-                       help='Path to test data directory (images with labels)')
-    parser.add_argument('--model', required=True, 
-                       help='Path to TFLite model file')
+    # Model arguments
+    parser.add_argument("--model", help="Path to single model for benchmarking")
+    parser.add_argument("--compare-models", nargs='+', help="Paths to multiple models for comparison")
     
-    # Testing parameters
-    parser.add_argument('--limit', type=int, default=0, 
-                       help='Limit number of test images (0 for all)')
-    parser.add_argument('--save-results', action='store_true', 
-                       help='Save benchmark results to file')
-    parser.add_argument('--output-dir', default='./benchmark_results', 
-                       help='Output directory for results')
-    parser.add_argument('--visualize', action='store_true', 
-                       help='Visualize results (show confusion matrix etc.)')
-    parser.add_argument('--warm-up', type=int, default=3, 
-                       help='Number of warm-up runs before timing')
+    # Data arguments
+    parser.add_argument("--test-data", required=True, 
+                       help="Path to test data (JSON file or image directory)")
     
-    # Advanced options
-    parser.add_argument('--preprocess', choices=['none', 'basic', 'advanced'], default='basic', 
-                       help='Preprocessing level')
-    parser.add_argument('--num-threads', type=int, default=1, 
-                       help='Number of threads for inference')
-    parser.add_argument('--detailed-metrics', action='store_true', 
-                       help='Report detailed metrics for each digit')
-    parser.add_argument('--per-device-metrics', action='store_true',
-                       help='Report metrics for each device/meter type')
+    # Output arguments
+    parser.add_argument("--output-dir", default="./benchmark_results",
+                       help="Output directory for results")
+    
+    # Options
+    parser.add_argument("--visualize", action="store_true", default=True,
+                       help="Generate visualization plots")
+    parser.add_argument("--save-results", action="store_true", default=True,
+                       help="Save detailed results to files")
+    parser.add_argument("--full-report", action="store_true",
+                       help="Generate comprehensive report")
     
     return parser.parse_args()
 
-def load_test_data(data_path, limit=0):
-    """
-    Load test images and their labels.
-    
-    Args:
-        data_path: Path to test data directory
-        limit: Maximum number of images to load (0 for all)
-        
-    Returns:
-        Tuple of (image_paths, labels)
-    """
-    if not os.path.isdir(data_path):
-        raise ValueError(f"Test data path does not exist: {data_path}")
-    
-    # Try to find labels.csv file
-    labels_file = os.path.join(data_path, "labels.csv")
-    if os.path.isfile(labels_file):
-        print(f"Found labels file: {labels_file}")
-        return load_from_csv(labels_file, data_path, limit)
-    
-    # If no CSV, try to find image files with corresponding JSON metadata
-    print("No labels.csv found, looking for image files with JSON metadata...")
-    return load_from_files(data_path, limit)
-
-def load_from_csv(csv_file, data_path, limit=0):
-    """Load test data from CSV file."""
-    image_paths = []
-    labels = []
-    
-    with open(csv_file, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if 'filename' in row and 'label' in row:
-                image_path = os.path.join(data_path, row['filename'])
-                if os.path.isfile(image_path):
-                    image_paths.append(image_path)
-                    labels.append(row['label'])
-                    
-                    if limit > 0 and len(image_paths) >= limit:
-                        break
-    
-    print(f"Loaded {len(image_paths)} images from CSV")
-    return image_paths, labels
-
-def load_from_files(data_path, limit=0):
-    """Load test data by searching for image files with JSON metadata."""
-    image_paths = []
-    labels = []
-    
-    # Find all image files
-    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp']
-    image_files = []
-    for ext in image_extensions:
-        image_files.extend(glob.glob(os.path.join(data_path, f"*{ext}")))
-        image_files.extend(glob.glob(os.path.join(data_path, f"*{ext.upper()}")))
-    
-    # Sort for consistency
-    image_files.sort()
-    
-    # Limit if needed
-    if limit > 0:
-        image_files = image_files[:limit]
-    
-    # Load labels from JSON files
-    for image_file in image_files:
-        json_file = os.path.splitext(image_file)[0] + ".json"
-        if os.path.isfile(json_file):
-            try:
-                with open(json_file, 'r') as f:
-                    metadata = json.load(f)
-                
-                if "label" in metadata:
-                    image_paths.append(image_file)
-                    labels.append(metadata["label"])
-            except Exception as e:
-                print(f"Warning: Could not read metadata from {json_file}: {e}")
-    
-    print(f"Loaded {len(image_paths)} images with metadata from files")
-    return image_paths, labels
-
-def load_tflite_model(model_path):
-    """
-    Load TFLite model for inference.
-    
-    Args:
-        model_path: Path to TFLite model file
-        
-    Returns:
-        TFLite interpreter
-    """
-    if not os.path.isfile(model_path):
-        raise ValueError(f"Model file does not exist: {model_path}")
-    
-    # Load TFLite model and allocate tensors
-    interpreter = tf.lite.Interpreter(model_path=model_path)
-    interpreter.allocate_tensors()
-    
-    # Get input and output details
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
-    
-    print(f"Model loaded: {model_path}")
-    print(f"Input shape: {input_details[0]['shape']}")
-    print(f"Output shape: {output_details[0]['shape']}")
-    
-    return interpreter, input_details, output_details
-
-def preprocess_image(image_path, input_shape, level='basic'):
-    """
-    Preprocess image for inference.
-    
-    Args:
-        image_path: Path to image file
-        input_shape: Shape of model input (from input_details)
-        level: Preprocessing level ('none', 'basic', or 'advanced')
-        
-    Returns:
-        Preprocessed image as numpy array
-    """
-    # Read image
-    image = cv2.imread(image_path)
-    if image is None:
-        raise ValueError(f"Could not read image: {image_path}")
-    
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    if level == 'none':
-        # Minimal preprocessing - just resize
-        resized = cv2.resize(gray, (input_shape[1], input_shape[2]))
-        
-    elif level == 'basic':
-        # Basic preprocessing
-        # Apply adaptive thresholding
-        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                      cv2.THRESH_BINARY_INV, 11, 2)
-        
-        # Resize
-        resized = cv2.resize(thresh, (input_shape[1], input_shape[2]))
-        
-    elif level == 'advanced':
-        # Advanced preprocessing
-        # Apply bilateral filter to remove noise while preserving edges
-        filtered = cv2.bilateralFilter(gray, 5, 75, 75)
-        
-        # Apply adaptive thresholding
-        thresh = cv2.adaptiveThreshold(filtered, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                      cv2.THRESH_BINARY_INV, 11, 2)
-        
-        # Find contours
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # If contours found, focus on the largest one
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            
-            # Extract ROI (region of interest)
-            roi = gray[y:y+h, x:x+w]
-            
-            # Apply Otsu's thresholding
-            _, binary = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-            
-            # Resize
-            resized = cv2.resize(binary, (input_shape[1], input_shape[2]))
-        else:
-            # Fallback to basic if no contours found
-            thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                         cv2.THRESH_BINARY_INV, 11, 2)
-            resized = cv2.resize(thresh, (input_shape[1], input_shape[2]))
-    
-    # Normalize to [0, 1]
-    normalized = resized.astype(np.float32) / 255.0
-    
-    # Add batch dimension
-    batched = np.expand_dims(normalized, axis=0)
-    
-    # Add channel dimension if needed
-    if len(input_shape) == 4 and input_shape[3] == 1:
-        batched = np.expand_dims(batched, axis=-1)
-    
-    return batched
-
-def run_inference(interpreter, input_details, output_details, preprocessed_image):
-    """
-    Run inference on preprocessed image.
-    
-    Args:
-        interpreter: TFLite interpreter
-        input_details: Model input details
-        output_details: Model output details
-        preprocessed_image: Preprocessed image as numpy array
-        
-    Returns:
-        Inference result and execution time
-    """
-    # Set input tensor
-    interpreter.set_tensor(input_details[0]['index'], preprocessed_image)
-    
-    # Measure inference time
-    start_time = time.time()
-    
-    # Run inference
-    interpreter.invoke()
-    
-    # Get execution time
-    execution_time = time.time() - start_time
-    
-    # Get output tensor
-    output_data = interpreter.get_tensor(output_details[0]['index'])
-    
-    return output_data, execution_time
-
-def postprocess_output(output_data, metadata=None):
-    """
-    Postprocess model output to get the predicted text.
-    
-    Args:
-        output_data: Raw model output
-        metadata: Optional model metadata for interpretation
-        
-    Returns:
-        Predicted text (string)
-    """
-    # This is a placeholder implementation
-    # The actual implementation would depend on the model's output format
-    
-    # For classification model with one digit per position
-    if len(output_data.shape) == 2:
-        # Assuming output is [batch_size, num_classes]
-        predicted_class = np.argmax(output_data[0])
-        return str(predicted_class)
-    
-    # For multi-digit classification
-    elif len(output_data.shape) == 3:
-        # Assuming output is [batch_size, num_digits, num_classes]
-        predicted_digits = []
-        for digit_probs in output_data[0]:
-            predicted_digit = np.argmax(digit_probs)
-            predicted_digits.append(str(predicted_digit))
-        
-        return ''.join(predicted_digits)
-    
-    # For sequence models (like CTC)
-    elif len(output_data.shape) == 4:
-        # This would require CTC decoding - simplified here
-        # Assuming output is [batch_size, time_steps, num_classes]
-        predicted_chars = []
-        for time_step in range(output_data.shape[1]):
-            char_idx = np.argmax(output_data[0, time_step, 0])
-            if char_idx > 0:  # Skip blank (usually 0)
-                predicted_chars.append(str(char_idx - 1))  # Adjust index
-        
-        return ''.join(predicted_chars)
-    
-    # Fallback for unknown format
-    else:
-        return str(output_data)
-
-def calculate_metrics(true_labels, predicted_labels, detailed=False):
-    """
-    Calculate accuracy and other metrics.
-    
-    Args:
-        true_labels: List of ground truth labels
-        predicted_labels: List of predicted labels
-        detailed: Whether to calculate per-digit metrics
-        
-    Returns:
-        Dictionary of metrics
-    """
-    metrics = {}
-    
-    # Calculate overall accuracy
-    correct = sum(1 for true, pred in zip(true_labels, predicted_labels) if true == pred)
-    metrics['accuracy'] = correct / len(true_labels) if len(true_labels) > 0 else 0
-    
-    # Calculate total character error rate (CER)
-    total_chars = sum(len(label) for label in true_labels)
-    char_errors = sum(levenshtein_distance(true, pred) for true, pred in zip(true_labels, predicted_labels))
-    metrics['character_error_rate'] = char_errors / total_chars if total_chars > 0 else 0
-    
-    # Calculate per-digit accuracy if requested
-    if detailed:
-        # Get maximum label length
-        max_len = max(len(label) for label in true_labels + predicted_labels)
-        
-        # Initialize per-digit metrics
-        per_digit_correct = [0] * max_len
-        per_digit_total = [0] * max_len
-        
-        for true, pred in zip(true_labels, predicted_labels):
-            # Pad shorter label with spaces
-            true_padded = true.ljust(max_len)
-            pred_padded = pred.ljust(max_len)
-            
-            for i in range(max_len):
-                if i < len(true):
-                    per_digit_total[i] += 1
-                    if i < len(pred) and true[i] == pred[i]:
-                        per_digit_correct[i] += 1
-        
-        # Calculate per-digit accuracy
-        metrics['per_digit_accuracy'] = []
-        for i in range(max_len):
-            if per_digit_total[i] > 0:
-                accuracy = per_digit_correct[i] / per_digit_total[i]
-            else:
-                accuracy = 0
-            metrics['per_digit_accuracy'].append(accuracy)
-    
-    return metrics
-
-def levenshtein_distance(s1, s2):
-    """
-    Calculate Levenshtein distance between two strings.
-    
-    Args:
-        s1: First string
-        s2: Second string
-        
-    Returns:
-        Levenshtein distance
-    """
-    if len(s1) < len(s2):
-        return levenshtein_distance(s2, s1)
-    
-    if len(s2) == 0:
-        return len(s1)
-    
-    previous_row = range(len(s2) + 1)
-    for i, c1 in enumerate(s1):
-        current_row = [i + 1]
-        for j, c2 in enumerate(s2):
-            # Calculate insertions, deletions, and substitutions
-            insertions = previous_row[j + 1] + 1
-            deletions = current_row[j] + 1
-            substitutions = previous_row[j] + (c1 != c2)
-            
-            # Get minimum
-            current_row.append(min(insertions, deletions, substitutions))
-        
-        previous_row = current_row
-    
-    return previous_row[-1]
-
-def measure_cpu_memory():
-    """
-    Measure CPU and memory usage.
-    
-    Returns:
-        Tuple of (cpu_percent, memory_mb)
-    """
-    cpu_percent = psutil.cpu_percent(interval=0.1)
-    memory_info = psutil.Process(os.getpid()).memory_info()
-    memory_mb = memory_info.rss / 1024 / 1024  # Convert bytes to MB
-    
-    return cpu_percent, memory_mb
-
-def visualize_results(true_labels, predicted_labels, execution_times, metrics, output_dir):
-    """
-    Visualize benchmark results.
-    
-    Args:
-        true_labels: List of ground truth labels
-        predicted_labels: List of predicted labels
-        execution_times: List of execution times
-        metrics: Dictionary of metrics
-        output_dir: Output directory for saving plots
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Plot execution time histogram
-    plt.figure(figsize=(10, 6))
-    plt.hist(execution_times, bins=20)
-    plt.title('Inference Time Distribution')
-    plt.xlabel('Execution Time (s)')
-    plt.ylabel('Frequency')
-    plt.grid(True, alpha=0.3)
-    plt.savefig(os.path.join(output_dir, 'execution_time_histogram.png'))
-    plt.close()
-    
-    # Plot per-digit accuracy if available
-    if 'per_digit_accuracy' in metrics:
-        plt.figure(figsize=(10, 6))
-        positions = list(range(1, len(metrics['per_digit_accuracy']) + 1))
-        plt.bar(positions, metrics['per_digit_accuracy'])
-        plt.title('Per-Digit Accuracy')
-        plt.xlabel('Digit Position')
-        plt.ylabel('Accuracy')
-        plt.xticks(positions)
-        plt.ylim(0, 1)
-        plt.grid(True, alpha=0.3)
-        plt.savefig(os.path.join(output_dir, 'per_digit_accuracy.png'))
-        plt.close()
-    
-    # Create confusion matrix for single digits
-    all_true_digits = ''.join(true_labels)
-    all_pred_digits = ''.join(predicted_labels)
-    
-    # Truncate or pad prediction to match true length
-    all_pred_digits = all_pred_digits[:len(all_true_digits)].ljust(len(all_true_digits))
-    
-    # Get unique digits
-    unique_digits = sorted(set(all_true_digits + all_pred_digits))
-    
-    # Initialize confusion matrix
-    confusion_matrix = np.zeros((len(unique_digits), len(unique_digits)), dtype=int)
-    
-    # Fill confusion matrix
-    for true_digit, pred_digit in zip(all_true_digits, all_pred_digits):
-        true_idx = unique_digits.index(true_digit)
-        pred_idx = unique_digits.index(pred_digit)
-        confusion_matrix[true_idx][pred_idx] += 1
-    
-    # Plot confusion matrix
-    plt.figure(figsize=(10, 8))
-    plt.imshow(confusion_matrix, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title('Confusion Matrix')
-    plt.colorbar()
-    tick_marks = np.arange(len(unique_digits))
-    plt.xticks(tick_marks, unique_digits)
-    plt.yticks(tick_marks, unique_digits)
-    plt.xlabel('Predicted Digit')
-    plt.ylabel('True Digit')
-    
-    # Add text annotations
-    thresh = confusion_matrix.max() / 2
-    for i in range(confusion_matrix.shape[0]):
-        for j in range(confusion_matrix.shape[1]):
-            plt.text(j, i, confusion_matrix[i, j],
-                   horizontalalignment="center",
-                   color="white" if confusion_matrix[i, j] > thresh else "black")
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, 'confusion_matrix.png'))
-    plt.close()
-
-def save_results_to_file(image_paths, true_labels, predicted_labels, execution_times, metrics, output_dir):
-    """
-    Save benchmark results to file.
-    
-    Args:
-        image_paths: List of image paths
-        true_labels: List of ground truth labels
-        predicted_labels: List of predicted labels
-        execution_times: List of execution times
-        metrics: Dictionary of metrics
-        output_dir: Output directory for saving results
-    """
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Save detailed results as CSV
-    results_file = os.path.join(output_dir, 'benchmark_results.csv')
-    with open(results_file, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['image', 'true_label', 'predicted_label', 'correct', 'execution_time'])
-        
-        for image_path, true, pred, time in zip(image_paths, true_labels, predicted_labels, execution_times):
-            correct = true == pred
-            writer.writerow([os.path.basename(image_path), true, pred, correct, time])
-    
-    # Save summary metrics as JSON
-    metrics_file = os.path.join(output_dir, 'benchmark_metrics.json')
-    with open(metrics_file, 'w') as f:
-        # Add some additional summary stats
-        metrics['avg_execution_time'] = sum(execution_times) / len(execution_times)
-        metrics['min_execution_time'] = min(execution_times)
-        metrics['max_execution_time'] = max(execution_times)
-        
-        json.dump(metrics, f, indent=4)
-    
-    print(f"Results saved to {output_dir}")
 
 def main():
-    """Main entry point of the script."""
+    """Main benchmarking function"""
     args = parse_args()
     
-    # Load test data
-    image_paths, true_labels = load_test_data(args.test_data, args.limit)
+    if not args.model and not args.compare_models:
+        print("Error: Must specify either --model or --compare-models")
+        return 1
     
-    if not image_paths:
-        print("Error: No test data found")
-        return
-    
-    # Load model
-    interpreter, input_details, output_details = load_tflite_model(args.model)
-    
-    # Set number of threads
-    interpreter.set_num_threads(args.num_threads)
-    
-    # Perform warm-up runs to eliminate initialization overhead
-    if args.warm_up > 0:
-        print(f"Performing {args.warm_up} warm-up runs...")
-        for _ in range(args.warm_up):
-            test_image = preprocess_image(image_paths[0], input_details[0]['shape'], args.preprocess)
-            interpreter.set_tensor(input_details[0]['index'], test_image)
-            interpreter.invoke()
-    
-    # Run benchmark
-    print(f"Running benchmark on {len(image_paths)} images...")
-    predicted_labels = []
-    execution_times = []
-    cpu_usages = []
-    memory_usages = []
-    
-    for i, (image_path, true_label) in enumerate(tqdm(zip(image_paths, true_labels), total=len(image_paths))):
-        try:
-            # Preprocess image
-            preprocessed_image = preprocess_image(image_path, input_details[0]['shape'], args.preprocess)
+    try:
+        # Initialize benchmark tool
+        benchmark = OCRBenchmark(args.output_dir)
+        
+        # Load test data
+        logger.info("Loading test data...")
+        test_images, test_labels, filenames = benchmark.load_test_data(args.test_data)
+        logger.info(f"Loaded {len(test_images)} test samples")
+        
+        # Run benchmarks
+        if args.compare_models:
+            # Compare multiple models
+            results = benchmark.compare_models(args.compare_models, test_images, test_labels)
+        else:
+            # Benchmark single model
+            result = benchmark.benchmark_model(args.model, test_images, test_labels)
+            results = [result]
+        
+        # Generate visualizations
+        if args.visualize:
+            for result in results:
+                benchmark.generate_visualizations(result)
+        
+        # Generate comprehensive report
+        if args.full_report or len(results) > 1:
+            report = benchmark.generate_report(results, save_json=args.save_results)
             
-            # Measure CPU and memory before inference
-            cpu_before, memory_before = measure_cpu_memory()
+            # Print summary
+            print("\n" + "="*50)
+            print("BENCHMARK SUMMARY")
+            print("="*50)
+            for result in results:
+                print(f"\n{result.model_name}:")
+                print(f"  Accuracy: {result.accuracy:.4f}")
+                print(f"  Speed: {result.inference_time_ms:.2f}ms")
+                print(f"  Size: {result.model_size_mb:.2f}MB")
             
-            # Run inference
-            output_data, execution_time = run_inference(
-                interpreter, input_details, output_details, preprocessed_image)
-            
-            # Measure CPU and memory after inference
-            cpu_after, memory_after = measure_cpu_memory()
-            
-            # Postprocess output
-            predicted_label = postprocess_output(output_data)
-            
-            # Record results
-            predicted_labels.append(predicted_label)
-            execution_times.append(execution_time)
-            cpu_usages.append(cpu_after - cpu_before)
-            memory_usages.append(memory_after - memory_before)
-            
-        except Exception as e:
-            print(f"Error processing {image_path}: {e}")
-            # Add placeholders for failed inference
-            predicted_labels.append("")
-            execution_times.append(0)
-            cpu_usages.append(0)
-            memory_usages.append(0)
+            print("\nRecommendations:")
+            for i, rec in enumerate(report['recommendations'], 1):
+                print(f"  {i}. {rec}")
+        
+        logger.info("Benchmarking completed successfully!")
+        
+    except Exception as e:
+        logger.error(f"Benchmarking failed: {e}")
+        return 1
     
-    # Calculate metrics
-    metrics = calculate_metrics(true_labels, predicted_labels, args.detailed_metrics)
-    
-    # Add resource usage metrics
-    metrics['avg_cpu_usage'] = sum(cpu_usages) / len(cpu_usages) if cpu_usages else 0
-    metrics['avg_memory_usage_mb'] = sum(memory_usages) / len(memory_usages) if memory_usages else 0
-    
-    # Print summary
-    print("\nBenchmark Results:")
-    print(f"Accuracy: {metrics['accuracy']:.4f}")
-    print(f"Character Error Rate: {metrics['character_error_rate']:.4f}")
-    print(f"Average Inference Time: {sum(execution_times) / len(execution_times):.4f} seconds")
-    print(f"Average CPU Usage: {metrics['avg_cpu_usage']:.2f}%")
-    print(f"Average Memory Usage: {metrics['avg_memory_usage_mb']:.2f} MB")
-    
-    # Visualize results if requested
-    if args.visualize:
-        print("\nGenerating visualizations...")
-        visualize_results(true_labels, predicted_labels, execution_times, metrics, args.output_dir)
-    
-    # Save results if requested
-    if args.save_results:
-        print("\nSaving results...")
-        save_results_to_file(image_paths, true_labels, predicted_labels, execution_times, metrics, args.output_dir)
+    return 0
+
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nBenchmark aborted by user")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+    exit(main())
