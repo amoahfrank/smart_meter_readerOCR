@@ -1,4 +1,28 @@
-opencv-python>=4.5.1
-numpy>=1.19.5
-pillow>=8.2.0
-pyserial>=3.5
+# Data Collection Tool Requirements
+# For Smart Meter Reader OCR Project
+
+# Computer Vision and Image Processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+scikit-image>=0.21.0
+numpy>=1.24.0
+
+# GUI and User Interface
+tkinter>=8.6  # Usually included with Python
+matplotlib>=3.7.0
+
+# Data Handling and Storage
+pandas>=2.0.0
+h5py>=3.9.0
+
+# Utilities
+tqdm>=4.65.0
+pathlib2>=2.3.7
+
+# Development and Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Optional: For advanced image augmentation
+# albumentations>=1.3.0
+# imgaug>=0.4.0
