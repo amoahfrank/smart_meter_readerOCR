@@ -1,4 +1,23 @@
-opencv-python>=4.5.1
-numpy>=1.19.5
-pillow>=8.2.0
-matplotlib>=3.4.2
+# Simulator Tool Requirements
+# For Smart Meter Reader OCR Project
+
+# Computer Vision and Image Processing
+opencv-python>=4.8.0
+Pillow>=10.0.0
+numpy>=1.24.0
+
+# GUI Framework
+tkinter>=8.6  # Usually included with Python
+
+# Image Enhancement
+Pillow>=10.0.0
+
+# Data Handling
+pathlib2>=2.3.7
+
+# Development and Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Optional: Advanced image effects
+scipy>=1.11.0
