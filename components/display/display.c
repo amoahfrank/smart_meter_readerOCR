@@ -6,7 +6,7 @@
  * It handles display initialization, text rendering, status updates, and power
  * management for the e-paper display.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
