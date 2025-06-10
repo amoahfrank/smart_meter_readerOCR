@@ -5,7 +5,7 @@
  * This file implements the WiFi connectivity manager for the Smart Meter Reader.
  * It handles WiFi initialization, connection, data transmission, and power management.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
