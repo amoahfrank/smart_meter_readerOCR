@@ -6,7 +6,7 @@
  * displays. It handles camera initialization, configuration, image capture,
  * and basic image processing functions.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
