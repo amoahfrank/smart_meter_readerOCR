@@ -5,7 +5,7 @@
  * This file provides the main interface for the OCR system, including
  * initialization, image processing, digit recognition, and result management.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
