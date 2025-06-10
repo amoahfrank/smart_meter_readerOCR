@@ -5,7 +5,7 @@
  * This file implements the security manager, which handles secure storage,
  * authentication, TLS/SSL configuration, and secure boot verification.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
