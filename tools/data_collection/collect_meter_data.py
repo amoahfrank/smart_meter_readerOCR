@@ -18,7 +18,7 @@ Usage:
     python collect_meter_data.py --source import --input-dir ./my_images --output ./training_data
     python collect_meter_data.py --source synthetic --count 1000 --output ./training_data
 
-Author: Smart Meter Reader OCR Team
+Author: Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
 """
 
 import argparse
