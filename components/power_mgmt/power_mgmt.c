@@ -5,7 +5,7 @@
  * This file implements power management functionality, including battery monitoring,
  * power modes, and sleep functionality to optimize battery life.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
