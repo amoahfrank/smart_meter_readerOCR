@@ -25,7 +25,7 @@ Usage:
     # Resume training from checkpoint
     python train_model.py --data-dir ./training_data --resume-from ./checkpoints/model_epoch_20.h5
 
-Author: Smart Meter Reader OCR Team
+Author: Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
 """
 
 import argparse
