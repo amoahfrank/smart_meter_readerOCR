@@ -27,7 +27,7 @@ Usage:
     # Generate ESP32 config
     python calibrate_camera.py --generate-esp32-config --output camera_config.h
 
-Author: Smart Meter Reader OCR Team
+Author: Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
 """
 
 import argparse
