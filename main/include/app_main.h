@@ -5,7 +5,7 @@
  * This file contains the definitions and declarations for the main
  * application, including system state and event definitions.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
