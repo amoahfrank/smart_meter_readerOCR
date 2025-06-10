@@ -6,7 +6,7 @@
  * This file implements the OTA (Over-The-Air) update functionality,
  * including firmware verification, download, and application.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
