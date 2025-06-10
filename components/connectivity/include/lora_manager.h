@@ -5,7 +5,7 @@
  * This file defines the public interface for the LoRaWAN connectivity manager,
  * which handles LoRa connection and data transmission.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
