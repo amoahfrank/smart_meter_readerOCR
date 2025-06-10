@@ -5,7 +5,7 @@
  * This file defines the public interface for the display module,
  * which manages the e-paper display functionality.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
