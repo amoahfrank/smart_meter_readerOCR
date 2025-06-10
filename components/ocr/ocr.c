@@ -6,7 +6,7 @@
  * Microcontrollers. It handles preprocessing of images and recognition
  * of meter readings.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
