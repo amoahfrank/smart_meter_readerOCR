@@ -25,7 +25,7 @@ Usage:
     # Generate comprehensive report
     python ocr_benchmark.py --model ./models/final_model.h5 --test-data ./test_images --full-report
 
-Author: Smart Meter Reader OCR Team
+Author: Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
 """
 
 import argparse
