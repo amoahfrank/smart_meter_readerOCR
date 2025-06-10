@@ -24,7 +24,7 @@ Usage:
     # Real-time simulation window
     python meter_simulator.py --realtime --type led_display
 
-Author: Smart Meter Reader OCR Team
+Author: Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
 """
 
 import argparse
