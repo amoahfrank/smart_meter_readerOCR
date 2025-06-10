@@ -6,7 +6,7 @@
  * operational flow, transitioning between different states based on
  * events and conditions.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
