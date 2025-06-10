@@ -6,7 +6,7 @@
  * It handles BLE initialization, advertising, service creation, configuration,
  * and data transmission.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
