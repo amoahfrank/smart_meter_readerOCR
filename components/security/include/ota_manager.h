@@ -5,7 +5,7 @@
  * This file defines the public interface for the OTA (Over-The-Air) update
  * manager, which handles firmware updates.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
