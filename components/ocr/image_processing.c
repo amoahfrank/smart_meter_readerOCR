@@ -6,7 +6,7 @@
  * camera images for OCR, including binarization, noise reduction,
  * perspective correction, and digit segmentation.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
