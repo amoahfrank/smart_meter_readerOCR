@@ -5,7 +5,7 @@
  * This file defines the public interface for the camera module,
  * which handles image capture for meter reading.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
