@@ -5,7 +5,7 @@
  * This file defines the public interface for interacting with the TensorFlow Lite
  * model used for digit recognition.
  * 
- * @author Smart Meter Reader OCR Team
+ * @author Frank Amoah A.K.A SiRWaTT Smart Meter Reader OCR Team Lead
  * @date 2023
  */
 
