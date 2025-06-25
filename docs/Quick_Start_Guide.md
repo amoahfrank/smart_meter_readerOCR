@@ -366,10 +366,6 @@ python tools/model_converter/train_model.py \
 
 ## Success Stories
 
-**"I deployed 50 units for water meter reading in remote locations. The system achieved 97% accuracy and 6 months battery life with solar charging."** - Municipal Water Authority
-
-**"Perfect for monitoring our industrial gas meters. The wireless connectivity and cloud integration saved us hours of manual readings."** - Manufacturing Company
-
 **"Great educational project! My students learned about computer vision, IoT, and embedded systems all in one project."** - University Professor
 
 ---
